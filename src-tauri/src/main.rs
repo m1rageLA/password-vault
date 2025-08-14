@@ -6,6 +6,7 @@ use models::db;
 #[tauri::command]
 fn main() {
     let db = db::DataBase::open("password_vault.db").unwrap();
-
+    let password = db::DataBase::add_password(db, "123232");
+    println!("{}", password.unwrap());
     my_app_lib::run()
 }
