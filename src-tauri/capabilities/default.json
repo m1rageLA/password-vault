@@ -3,8 +3,17 @@
   "identifier": "default",
   "description": "Capability for the main window",
   "windows": ["main"],
+  "local": true,
   "permissions": [
     "core:default",
-    "opener:default"
+    "core:app:default",
+    "core:event:default",
+    "core:window:default",
+    "core:menu:default",
+    "core:webview:default",
+    "core:path:default",
+    "core:image:default",
+    "core:resources:default",
+    "core:tray:default"
   ]
 }

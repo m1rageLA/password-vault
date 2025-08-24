@@ -4,13 +4,9 @@ version = "0.1.0"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+resolver = "2"            # <- add this to avoid feature leakage
 
 [lib]
-# The `_lib` suffix may seem redundant but it is necessary
-# to make the lib name unique and wouldn't conflict with the bin name.
-# This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
 name = "my_app_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
@@ -18,14 +14,26 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+tokio = { version = "1.39", features = ["macros", "rt-multi-thread"] }
 tauri = { version = "2", features = [] }
-tauri-plugin-opener = "2"
+
+# БД
+sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "sqlite"] }
+
+# Криптография
+argon2 = "0.5"
+rand = "0.9.1"
+chacha20poly1305 = { version = "0.10", features = ["std"] }
+zeroize = "1"
+secrecy = "0.8"
+
+# Утилиты/сериализация/ошибки
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-argon2 = "0.5.3"
-chacha20poly1305 = "0.10.1"
-rand_core = "0.9.3"
-zeroize = "1.8.1"
-secrecy = "0.10.3"
-rusqlite = "0.37.0"
+thiserror = "2.0.16"
+time = { version = "0.3", features = ["macros"] }
 
+# Для тестов
+tempfile = "3"
+anyhow = "1"
+getrandom = "0.2"
