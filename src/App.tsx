@@ -127,9 +127,9 @@ export default function App() {
   const generate = async (len = 20) => {
     const s = await invoke<string>("generate_password", {
       length: len,
-      useDigits: true,
-      useUpper: true,
-      useSymbols: true,
+      use_digits: true,
+      use_upper: true,
+      use_symbols: true,
     });
     navigator.clipboard.writeText(s);
     alert("Generated password copied to clipboard");
@@ -138,16 +138,24 @@ export default function App() {
   const exportBackup = async () => {
     const path = prompt("Export to file path (e.g. /tmp/backup.vault):");
     if (!path) return;
-    await invoke("export_backup", { path });
-    alert("Exported");
+    try {
+      await invoke("export_backup", { path });
+      alert("Exported");
+    } catch (e) {
+      alert(`Export failed: ${e}`);
+    }
   };
 
   const importBackup = async () => {
     const path = prompt("Import from file path (.vault):");
     if (!path) return;
-    const count = await invoke<number>("import_backup", { path });
-    alert(`Imported ${count} entries`);
-    await reload();
+    try {
+      const count = await invoke<number>("import_backup", { path });
+      alert(`Imported ${count} entries`);
+      await reload();
+    } catch (e) {
+      alert(`Import failed: ${e}`);
+    }
   };
 
   const left = useMemo(() => {
