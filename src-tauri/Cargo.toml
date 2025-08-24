@@ -37,3 +37,5 @@ time = { version = "0.3", features = ["macros"] }
 tempfile = "3"
 anyhow = "1"
 getrandom = "0.2"
+tauri-plugin-dialog = "2"
+tauri-plugin-fs = "2"

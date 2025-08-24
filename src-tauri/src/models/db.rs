@@ -44,7 +44,11 @@ struct KdfParams {
 }
 impl Default for KdfParams {
     fn default() -> Self {
-        Self { mem_cost_kib: 19_456, iterations: 2, parallelism: 1 }
+        Self {
+            mem_cost_kib: 19_456,
+            iterations: 2,
+            parallelism: 1,
+        }
     }
 }
 fn argon2_from_params(p: &KdfParams) -> Argon2<'static> {
@@ -62,18 +66,24 @@ fn encrypt(key_bytes: &[u8; 32], plaintext: &[u8]) -> ResultT<Vec<u8>> {
     let nonce = Nonce::from_slice(&nonce_bytes);
 
     let mut out = nonce_bytes.to_vec();
-    let ct = cipher.encrypt(nonce, plaintext).map_err(|_| VaultError::Crypto)?;
+    let ct = cipher
+        .encrypt(nonce, plaintext)
+        .map_err(|_| VaultError::Crypto)?;
     out.extend_from_slice(&ct);
     Ok(out)
 }
 
 /// ожидает nonce||ciphertext
 fn decrypt(key_bytes: &[u8; 32], data: &[u8]) -> ResultT<Vec<u8>> {
-    if data.len() < 12 { return Err(VaultError::Crypto); }
+    if data.len() < 12 {
+        return Err(VaultError::Crypto);
+    }
     let (nonce_bytes, ct) = data.split_at(12);
     let key = Key::from_slice(key_bytes);
     let cipher = ChaCha20Poly1305::new(key);
-    cipher.decrypt(Nonce::from_slice(nonce_bytes), ct).map_err(|_| VaultError::BadMasterPassword)
+    cipher
+        .decrypt(Nonce::from_slice(nonce_bytes), ct)
+        .map_err(|_| VaultError::BadMasterPassword)
 }
 
 const KEY_CHECK_PLAINTEXT: &[u8] = b"vault-key-check";
@@ -138,15 +148,23 @@ impl DataBase {
 
             CREATE INDEX IF NOT EXISTS idx_entries_site ON entries(site);
             CREATE INDEX IF NOT EXISTS idx_entries_username ON entries(username);
-            "#
-        ).await?;
+            "#,
+        )
+        .await?;
 
-        Ok(Self { pool, key: Arc::new(RwLock::new(None)) })
+        Ok(Self {
+            pool,
+            key: Arc::new(RwLock::new(None)),
+        })
     }
 
     pub async fn init_master(&self, master: SecretString) -> ResultT<()> {
-        let row = sqlx::query("SELECT COUNT(*) as c FROM vault_config").fetch_one(&self.pool).await?;
-        if row.get::<i64, _>("c") > 0 { return Err(VaultError::AlreadyInitialized); }
+        let row = sqlx::query("SELECT COUNT(*) as c FROM vault_config")
+            .fetch_one(&self.pool)
+            .await?;
+        if row.get::<i64, _>("c") > 0 {
+            return Err(VaultError::AlreadyInitialized);
+        }
 
         let mut salt = [0u8; 16];
         getrandom(&mut salt).map_err(|_| VaultError::Crypto)?;
@@ -155,7 +173,8 @@ impl DataBase {
         let argon = argon2_from_params(&kdf_params);
 
         let mut key = [0u8; 32];
-        argon.hash_password_into(master.expose_secret().as_bytes(), &salt, &mut key)
+        argon
+            .hash_password_into(master.expose_secret().as_bytes(), &salt, &mut key)
             .map_err(|_| VaultError::Crypto)?;
 
         let key_check = encrypt(&key, KEY_CHECK_PLAINTEXT)?;
@@ -163,7 +182,7 @@ impl DataBase {
 
         sqlx::query(
             "INSERT INTO vault_config (id, kdf_salt, kdf_params, key_check, created_at)
-             VALUES (1, ?, ?, ?, ?)"
+             VALUES (1, ?, ?, ?, ?)",
         )
         .bind(salt.to_vec())
         .bind(serde_json::to_string(&kdf_params).unwrap())
@@ -177,18 +196,21 @@ impl DataBase {
     }
 
     pub async fn unlock(&self, master: SecretString) -> ResultT<()> {
-        let row = sqlx::query("SELECT kdf_salt, kdf_params, key_check FROM vault_config WHERE id=1")
-            .fetch_optional(&self.pool).await?
-            .ok_or(VaultError::NotInitialized)?;
+        let row =
+            sqlx::query("SELECT kdf_salt, kdf_params, key_check FROM vault_config WHERE id=1")
+                .fetch_optional(&self.pool)
+                .await?
+                .ok_or(VaultError::NotInitialized)?;
 
         let salt: Vec<u8> = row.get("kdf_salt");
-        let kdf_params: KdfParams = serde_json::from_str(&row.get::<String,_>("kdf_params"))
+        let kdf_params: KdfParams = serde_json::from_str(&row.get::<String, _>("kdf_params"))
             .map_err(|e| VaultError::Other(e.to_string()))?;
         let key_check: Vec<u8> = row.get("key_check");
 
         let argon = argon2_from_params(&kdf_params);
         let mut key = [0u8; 32];
-        argon.hash_password_into(master.expose_secret().as_bytes(), &salt, &mut key)
+        argon
+            .hash_password_into(master.expose_secret().as_bytes(), &salt, &mut key)
             .map_err(|_| VaultError::Crypto)?;
 
         let check_plain = decrypt(&key, &key_check)?;
@@ -202,12 +224,20 @@ impl DataBase {
     }
 
     pub async fn lock(&self) {
-        if let Some(mut k) = self.key.write().await.take() { k.zeroize(); }
+        if let Some(mut k) = self.key.write().await.take() {
+            k.zeroize();
+        }
     }
-    pub async fn is_unlocked(&self) -> bool { self.key.read().await.is_some() }
+    pub async fn is_unlocked(&self) -> bool {
+        self.key.read().await.is_some()
+    }
 
     pub async fn add_entry(
-        &self, site: &str, username: &str, password: &str, notes: Option<&str>,
+        &self,
+        site: &str,
+        username: &str,
+        password: &str,
+        notes: Option<&str>,
     ) -> ResultT<i64> {
         let key = self.get_key().await?;
         let now = epoch();
@@ -220,7 +250,7 @@ impl DataBase {
 
         let res = sqlx::query(
             "INSERT INTO entries (site, username, password_enc, notes_enc, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?)"
+             VALUES (?, ?, ?, ?, ?, ?)",
         )
         .bind(site)
         .bind(username)
@@ -238,14 +268,15 @@ impl DataBase {
         let key = self.get_key().await?;
         let row = sqlx::query(
             "SELECT id, site, username, password_enc, notes_enc, created_at, updated_at
-             FROM entries WHERE id = ?"
+             FROM entries WHERE id = ?",
         )
         .bind(id)
         .fetch_one(&self.pool)
         .await?;
 
         let pwd_ct: Vec<u8> = row.get("password_enc");
-        let password = String::from_utf8(decrypt(&key, &pwd_ct)?).map_err(|_| VaultError::Crypto)?;
+        let password =
+            String::from_utf8(decrypt(&key, &pwd_ct)?).map_err(|_| VaultError::Crypto)?;
         let notes = match row.try_get::<Vec<u8>, _>("notes_enc") {
             Ok(ct) => Some(String::from_utf8(decrypt(&key, &ct)?).map_err(|_| VaultError::Crypto)?),
             Err(_) => None,
@@ -269,39 +300,61 @@ impl DataBase {
                 "SELECT id, site, username, created_at, updated_at
                  FROM entries
                  WHERE site LIKE ? OR username LIKE ?
-                 ORDER BY updated_at DESC, id DESC"
+                 ORDER BY updated_at DESC, id DESC",
             )
-            .bind(&l).bind(&l).fetch_all(&self.pool).await?
+            .bind(&l)
+            .bind(&l)
+            .fetch_all(&self.pool)
+            .await?
         } else {
             sqlx::query(
                 "SELECT id, site, username, created_at, updated_at
                  FROM entries
-                 ORDER BY updated_at DESC, id DESC"
+                 ORDER BY updated_at DESC, id DESC",
             )
-            .fetch_all(&self.pool).await?
+            .fetch_all(&self.pool)
+            .await?
         };
-        Ok(rows.into_iter().map(|r| EntryListItem {
-            id: r.get("id"),
-            site: r.get("site"),
-            username: r.get("username"),
-            created_at: r.get("created_at"),
-            updated_at: r.get("updated_at"),
-        }).collect())
+        Ok(rows
+            .into_iter()
+            .map(|r| EntryListItem {
+                id: r.get("id"),
+                site: r.get("site"),
+                username: r.get("username"),
+                created_at: r.get("created_at"),
+                updated_at: r.get("updated_at"),
+            })
+            .collect())
     }
 
     pub async fn update_entry(
-        &self, id: i64, site: &str, username: &str, password: Option<&str>, notes: Option<&str>,
+        &self,
+        id: i64,
+        site: &str,
+        username: &str,
+        password: Option<&str>,
+        notes: Option<&str>,
     ) -> ResultT<()> {
         let key = self.get_key().await?;
         let now = epoch();
 
         let row = sqlx::query("SELECT password_enc, notes_enc FROM entries WHERE id=?")
-            .bind(id).fetch_one(&self.pool).await?;
+            .bind(id)
+            .fetch_one(&self.pool)
+            .await?;
         let mut pwd_ct: Vec<u8> = row.get("password_enc");
         let mut notes_ct: Option<Vec<u8>> = row.try_get("notes_enc").ok();
 
-        if let Some(p) = password { pwd_ct = encrypt(&key, p.as_bytes())?; }
-        if let Some(n) = notes { notes_ct = if n.is_empty() { None } else { Some(encrypt(&key, n.as_bytes())?) }; }
+        if let Some(p) = password {
+            pwd_ct = encrypt(&key, p.as_bytes())?;
+        }
+        if let Some(n) = notes {
+            notes_ct = if n.is_empty() {
+                None
+            } else {
+                Some(encrypt(&key, n.as_bytes())?)
+            };
+        }
 
         sqlx::query(
             "UPDATE entries SET site=?, username=?, password_enc=?, notes_enc=?, updated_at=? WHERE id=?"
@@ -312,8 +365,78 @@ impl DataBase {
     }
 
     pub async fn delete_entry(&self, id: i64) -> ResultT<()> {
-        sqlx::query("DELETE FROM entries WHERE id=?").bind(id).execute(&self.pool).await?;
+        sqlx::query("DELETE FROM entries WHERE id=?")
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
         Ok(())
+    }
+
+    pub async fn export_encrypted_bytes(&self) -> ResultT<Vec<u8>> {
+        let key = self.get_key().await?;
+        let rows = sqlx::query(
+        "SELECT id, site, username, password_enc, notes_enc, created_at, updated_at FROM entries"
+    ).fetch_all(&self.pool).await?;
+
+        #[derive(Serialize)]
+        struct Plain {
+            id: i64,
+            site: String,
+            username: String,
+            password: String,
+            notes: Option<String>,
+            created_at: i64,
+            updated_at: i64,
+        }
+
+        let mut items = Vec::with_capacity(rows.len());
+        for r in rows {
+            let pwd_ct: Vec<u8> = r.get("password_enc");
+            let password =
+                String::from_utf8(decrypt(&key, &pwd_ct)?).map_err(|_| VaultError::Crypto)?;
+            let notes = match r.try_get::<Vec<u8>, _>("notes_enc") {
+                Ok(ct) => {
+                    Some(String::from_utf8(decrypt(&key, &ct)?).map_err(|_| VaultError::Crypto)?)
+                }
+                Err(_) => None,
+            };
+            items.push(Plain {
+                id: r.get("id"),
+                site: r.get("site"),
+                username: r.get("username"),
+                password,
+                notes,
+                created_at: r.get("created_at"),
+                updated_at: r.get("updated_at"),
+            });
+        }
+
+        let json = serde_json::to_vec(&items).unwrap();
+        let sealed = encrypt(&key, &json)?;
+        Ok(sealed)
+    }
+
+    pub async fn import_encrypted_bytes(&self, data: &[u8]) -> ResultT<usize> {
+        let key = self.get_key().await?;
+        let plain = decrypt(&key, data)?;
+
+        #[derive(Deserialize)]
+        struct Plain {
+            site: String,
+            username: String,
+            password: String,
+            notes: Option<String>,
+        }
+        let items: Vec<Plain> =
+            serde_json::from_slice(&plain).map_err(|e| VaultError::Other(e.to_string()))?;
+
+        let mut count = 0usize;
+        for it in items {
+            self.add_entry(&it.site, &it.username, &it.password, it.notes.as_deref())
+                .await?;
+            count += 1;
+        }
+        Ok(count)
     }
 
     pub async fn export_encrypted_backup<P: AsRef<Path>>(&self, path: P) -> ResultT<()> {
@@ -324,23 +447,32 @@ impl DataBase {
 
         #[derive(Serialize)]
         struct Plain {
-            id: i64, site: String, username: String, password: String,
-            notes: Option<String>, created_at: i64, updated_at: i64,
+            id: i64,
+            site: String,
+            username: String,
+            password: String,
+            notes: Option<String>,
+            created_at: i64,
+            updated_at: i64,
         }
 
         let mut items = Vec::with_capacity(rows.len());
         for r in rows {
             let pwd_ct: Vec<u8> = r.get("password_enc");
-            let password = String::from_utf8(decrypt(&key, &pwd_ct)?).map_err(|_| VaultError::Crypto)?;
+            let password =
+                String::from_utf8(decrypt(&key, &pwd_ct)?).map_err(|_| VaultError::Crypto)?;
             let notes = match r.try_get::<Vec<u8>, _>("notes_enc") {
-                Ok(ct) => Some(String::from_utf8(decrypt(&key, &ct)?).map_err(|_| VaultError::Crypto)?),
+                Ok(ct) => {
+                    Some(String::from_utf8(decrypt(&key, &ct)?).map_err(|_| VaultError::Crypto)?)
+                }
                 Err(_) => None,
             };
             items.push(Plain {
                 id: r.get("id"),
                 site: r.get("site"),
                 username: r.get("username"),
-                password, notes,
+                password,
+                notes,
                 created_at: r.get("created_at"),
                 updated_at: r.get("updated_at"),
             });
@@ -357,26 +489,45 @@ impl DataBase {
         let plain = decrypt(&key, &bytes)?;
 
         #[derive(Deserialize)]
-        struct Plain { site: String, username: String, password: String, notes: Option<String> }
-        let items: Vec<Plain> = serde_json::from_slice(&plain).map_err(|e| VaultError::Other(e.to_string()))?;
+        struct Plain {
+            site: String,
+            username: String,
+            password: String,
+            notes: Option<String>,
+        }
+        let items: Vec<Plain> =
+            serde_json::from_slice(&plain).map_err(|e| VaultError::Other(e.to_string()))?;
 
         let mut count = 0usize;
         for it in items {
-            self.add_entry(&it.site, &it.username, &it.password, it.notes.as_deref()).await?;
+            self.add_entry(&it.site, &it.username, &it.password, it.notes.as_deref())
+                .await?;
             count += 1;
         }
         Ok(count)
     }
 
     pub fn generate_password(
-        &self, length: usize, use_digits: bool, use_upper: bool, use_symbols: bool,
+        &self,
+        length: usize,
+        use_digits: bool,
+        use_upper: bool,
+        use_symbols: bool,
     ) -> String {
         let mut charset = String::from("abcdefghijklmnopqrstuvwxyz");
-        if use_upper { charset.push_str("ABCDEFGHIJKLMNOPQRSTUVWXYZ"); }
-        if use_digits { charset.push_str("0123456789"); }
-        if use_symbols { charset.push_str("!@#$%^&*()-_=+[]{};:,.?/\\|`~"); }
+        if use_upper {
+            charset.push_str("ABCDEFGHIJKLMNOPQRSTUVWXYZ");
+        }
+        if use_digits {
+            charset.push_str("0123456789");
+        }
+        if use_symbols {
+            charset.push_str("!@#$%^&*()-_=+[]{};:,.?/\\|`~");
+        }
         let bytes = charset.as_bytes();
-        if bytes.is_empty() { return String::new(); }
+        if bytes.is_empty() {
+            return String::new();
+        }
 
         let mut out = String::with_capacity(length);
         for _ in 0..length {
@@ -394,13 +545,21 @@ impl DataBase {
     }
 
     async fn get_key(&self) -> ResultT<[u8; 32]> {
-        self.key.read().await.as_ref().copied().ok_or(VaultError::Locked)
+        self.key
+            .read()
+            .await
+            .as_ref()
+            .copied()
+            .ok_or(VaultError::Locked)
     }
 }
 
 fn epoch() -> i64 {
     use std::time::{SystemTime, UNIX_EPOCH};
-    SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() as i64
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64
 }
 
 #[cfg(test)]
@@ -414,16 +573,23 @@ mod tests {
         let db_path = dir.path().join("t.db");
         let db = DataBase::open(&db_path).await.unwrap();
 
-        db.init_master(SecretString::new("master123".into())).await.unwrap();
+        db.init_master(SecretString::new("master123".into()))
+            .await
+            .unwrap();
         assert!(db.is_unlocked().await);
 
-        let id = db.add_entry("example.com", "alice", "p@ss", Some("note")).await.unwrap();
+        let id = db
+            .add_entry("example.com", "alice", "p@ss", Some("note"))
+            .await
+            .unwrap();
         let e = db.get_entry(id).await.unwrap();
         assert_eq!(e.username, "alice");
         assert_eq!(e.password, "p@ss");
         assert_eq!(e.notes.as_deref(), Some("note"));
 
-        db.update_entry(id, "example.org", "alice", Some("new"), None).await.unwrap();
+        db.update_entry(id, "example.org", "alice", Some("new"), None)
+            .await
+            .unwrap();
         let e2 = db.get_entry(id).await.unwrap();
         assert_eq!(e2.site, "example.org");
         assert_eq!(e2.password, "new");
@@ -442,7 +608,9 @@ mod tests {
         db.lock().await;
         assert!(!db.is_unlocked().await);
         assert!(matches!(db.get_entry(id).await, Err(VaultError::Locked)));
-        db.unlock(SecretString::new("master123".into())).await.unwrap();
+        db.unlock(SecretString::new("master123".into()))
+            .await
+            .unwrap();
         let _ = db.get_entry(id).await.unwrap();
     }
 }

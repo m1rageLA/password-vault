@@ -1,5 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { open, save } from "@tauri-apps/plugin-dialog";
+import { readFile, writeFile } from "@tauri-apps/plugin-fs";
+
 import "./App.css";
 
 type EntryListItem = {
@@ -25,6 +28,17 @@ function fmt(ts: number) {
   return d.toLocaleString();
 }
 
+// Универсальная обёртка, чтобы не терять ошибки
+async function call<T>(cmd: string, args?: any): Promise<T> {
+  try {
+    return await invoke<T>(cmd, args);
+  } catch (e: any) {
+    const msg = typeof e === "string" ? e : e?.message ?? JSON.stringify(e);
+    alert(`Error: ${msg}`);
+    throw e;
+  }
+}
+
 export default function App() {
   const [unlocked, setUnlocked] = useState(false);
   const [master, setMaster] = useState("");
@@ -32,11 +46,15 @@ export default function App() {
   const [items, setItems] = useState<EntryListItem[]>([]);
   const [selected, setSelected] = useState<Entry | null>(null);
 
+  // контролируемые поля для генерации паролей
+  const [addPwd, setAddPwd] = useState("");
+  const [editPwd, setEditPwd] = useState("");
+
   const reload = async () => {
-    const ok = await invoke<boolean>("vault_is_unlocked");
+    const ok = await call<boolean>("vault_is_unlocked");
     setUnlocked(ok);
     if (ok) {
-      const list = await invoke<EntryListItem[]>("list_entries", {
+      const list = await call<EntryListItem[]>("list_entries", {
         search: search.trim() ? search : null,
       });
       setItems(list);
@@ -52,19 +70,29 @@ export default function App() {
 
   const handleInit = async () => {
     if (!master.trim()) return;
-    await invoke("vault_init", { master });
+    try {
+      await call("vault_init", { master });
+    } catch (e: any) {
+      const msg = String(typeof e === "string" ? e : e?.message ?? "");
+      if (msg.toLowerCase().includes("already initialized")) {
+        await call("vault_unlock", { master });
+      } else {
+        throw e;
+      }
+    }
+    setMaster("");
     await reload();
   };
 
   const handleUnlock = async () => {
     if (!master.trim()) return;
-    await invoke("vault_unlock", { master });
+    await call("vault_unlock", { master });
     setMaster("");
     await reload();
   };
 
   const handleLock = async () => {
-    await invoke("vault_lock");
+    await call("vault_lock");
     await reload();
   };
 
@@ -75,39 +103,44 @@ export default function App() {
     const username = String(fd.get("username") || "");
     const password = String(fd.get("password") || "");
     const notes = String(fd.get("notes") || "");
-    const id = await invoke<number>("add_entry", {
+    const id = await call<number>("add_entry", {
       site,
       username,
       password,
       notes: notes.trim() ? notes : null,
     });
     (e.target as HTMLFormElement).reset();
+    setAddPwd("");
     setSearch("");
     await reload();
     // auto-open
-    const ent = await invoke<Entry>("get_entry", { id });
+    const ent = await call<Entry>("get_entry", { id });
     setSelected(ent);
   };
 
   const openEntry = async (id: number) => {
-    const ent = await invoke<Entry>("get_entry", { id });
+    const ent = await call<Entry>("get_entry", { id });
     setSelected(ent);
+    setEditPwd(""); // сбрасываем поле нового пароля
   };
 
   const handleDelete = async (id: number) => {
     if (!confirm("Delete entry?")) return;
-    await invoke("delete_entry", { id });
+    await call("delete_entry", { id });
     await reload();
   };
 
-  const handleUpdate = async (e: React.FormEvent<HTMLFormElement>, id: number) => {
+  const handleUpdate = async (
+    e: React.FormEvent<HTMLFormElement>,
+    id: number
+  ) => {
     e.preventDefault();
     const fd = new FormData(e.currentTarget);
     const site = String(fd.get("site") || "");
     const username = String(fd.get("username") || "");
     const password = String(fd.get("password") || "");
     const notes = String(fd.get("notes") || "");
-    await invoke("update_entry", {
+    await call("update_entry", {
       id,
       site,
       username,
@@ -115,8 +148,9 @@ export default function App() {
       notes: notes.length ? notes : null,
     });
     await reload();
-    const ent = await invoke<Entry>("get_entry", { id });
+    const ent = await call<Entry>("get_entry", { id });
     setSelected(ent);
+    setEditPwd("");
   };
 
   const doSearch = async (e: React.FormEvent) => {
@@ -124,31 +158,46 @@ export default function App() {
     await reload();
   };
 
-  const generate = async (len = 20) => {
-    const s = await invoke<string>("generate_password", {
+  const generate = async (
+    len = 20,
+    set?: (s: string) => void
+  ) => {
+    const s = await call<string>("generate_password", {
       length: len,
       useDigits: true,
       useUpper: true,
       useSymbols: true,
     });
-    navigator.clipboard.writeText(s);
-    alert("Generated password copied to clipboard");
+    set?.(s);
+    try {
+      await navigator.clipboard.writeText(s);
+      alert("Generated password copied to clipboard");
+    } catch {
+      // молча игнорируем, если нет разрешения на буфер обмена
+    }
   };
 
-  const exportBackup = async () => {
-    const path = prompt("Export to file path (e.g. /tmp/backup.vault):");
-    if (!path) return;
-    await invoke("export_backup", { path });
-    alert("Exported");
-  };
+const exportBackup = async () => {
+  const path = await save({ defaultPath: "backup.vault" });
+  if (!path) return;
+  // получаем зашифрованные байты с бэкапом
+  const bytes = await call<Uint8Array>("export_backup_bytes");
+  await writeFile(path, bytes);
+  alert("Exported");
+};
 
-  const importBackup = async () => {
-    const path = prompt("Import from file path (.vault):");
-    if (!path) return;
-    const count = await invoke<number>("import_backup", { path });
-    alert(`Imported ${count} entries`);
-    await reload();
-  };
+const importBackup = async () => {
+  const path = await open({
+    multiple: false,
+    filters: [{ name: "Vault", extensions: ["vault"] }],
+  });
+  if (!path || Array.isArray(path)) return;
+  const bytes = await readFile(path);
+  // invoke лучше кормить обычным массивом чисел
+  const count = await call<number>("import_backup_bytes", { data: Array.from(bytes) });
+  alert(`Imported ${count} entries`);
+  await reload();
+};
 
   const left = useMemo(() => {
     if (!unlocked) return null;
@@ -161,7 +210,13 @@ export default function App() {
             placeholder="Search site or username"
           />
           <button type="submit">Search</button>
-          <button type="button" onClick={() => { setSearch(""); reload(); }}>
+          <button
+            type="button"
+            onClick={() => {
+              setSearch("");
+              reload();
+            }}
+          >
             Reset
           </button>
         </form>
@@ -195,8 +250,16 @@ export default function App() {
           <input name="site" placeholder="Site (e.g. example.com)" required />
           <input name="username" placeholder="Username" required />
           <div className="row">
-            <input name="password" placeholder="Password" required />
-            <button type="button" onClick={() => generate(20)}>Generate</button>
+            <input
+              name="password"
+              placeholder="Password"
+              required
+              value={addPwd}
+              onChange={(e) => setAddPwd(e.target.value)}
+            />
+            <button type="button" onClick={() => generate(20, setAddPwd)}>
+              Generate
+            </button>
           </div>
           <textarea name="notes" placeholder="Notes (optional)" />
           <button type="submit">Add</button>
@@ -208,7 +271,20 @@ export default function App() {
             <form onSubmit={(e) => handleUpdate(e, selected.id)} className="col">
               <input name="site" defaultValue={selected.site} required />
               <input name="username" defaultValue={selected.username} required />
-              <input name="password" placeholder="New password (optional)" />
+              <div className="row">
+                <input
+                  name="password"
+                  placeholder="New password (optional)"
+                  value={editPwd}
+                  onChange={(e) => setEditPwd(e.target.value)}
+                />
+                <button
+                  type="button"
+                  onClick={() => generate(20, setEditPwd)}
+                >
+                  Generate
+                </button>
+              </div>
               <textarea name="notes" defaultValue={selected.notes ?? ""} />
               <button type="submit">Save</button>
             </form>
@@ -219,7 +295,7 @@ export default function App() {
         )}
       </div>
     );
-  }, [unlocked, selected]);
+  }, [unlocked, selected, addPwd, editPwd]);
 
   return (
     <main className="container">
@@ -239,7 +315,8 @@ export default function App() {
             <button onClick={handleUnlock}>Unlock</button>
           </div>
           <p className="muted">
-            New install? Click <b>Init</b>. Otherwise enter your master password and click <b>Unlock</b>.
+            New install? Click <b>Init</b>. Otherwise enter your master password
+            and click <b>Unlock</b>.
           </p>
         </div>
       ) : (
