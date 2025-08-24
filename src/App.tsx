@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import "./App.css";
 
@@ -31,6 +31,7 @@ export default function App() {
   const [search, setSearch] = useState("");
   const [items, setItems] = useState<EntryListItem[]>([]);
   const [selected, setSelected] = useState<Entry | null>(null);
+  const passwordRef = useRef<HTMLInputElement>(null);
 
   const reload = async () => {
     const ok = await invoke<boolean>("vault_is_unlocked");
@@ -127,27 +128,42 @@ export default function App() {
   const generate = async (len = 20) => {
     const s = await invoke<string>("generate_password", {
       length: len,
-      useDigits: true,
-      useUpper: true,
-      useSymbols: true,
+      use_digits: true,
+      use_upper: true,
+      use_symbols: true,
     });
-    navigator.clipboard.writeText(s);
+    if (passwordRef.current) {
+      passwordRef.current.value = s;
+    }
+    try {
+      await navigator.clipboard.writeText(s);
+    } catch (_) {
+      // clipboard may be unavailable
+    }
     alert("Generated password copied to clipboard");
   };
 
   const exportBackup = async () => {
     const path = prompt("Export to file path (e.g. /tmp/backup.vault):");
     if (!path) return;
-    await invoke("export_backup", { path });
-    alert("Exported");
+    try {
+      await invoke("export_backup", { path });
+      alert("Exported");
+    } catch (e) {
+      alert(`Export failed: ${e}`);
+    }
   };
 
   const importBackup = async () => {
     const path = prompt("Import from file path (.vault):");
     if (!path) return;
-    const count = await invoke<number>("import_backup", { path });
-    alert(`Imported ${count} entries`);
-    await reload();
+    try {
+      const count = await invoke<number>("import_backup", { path });
+      alert(`Imported ${count} entries`);
+      await reload();
+    } catch (e) {
+      alert(`Import failed: ${e}`);
+    }
   };
 
   const left = useMemo(() => {
@@ -195,7 +211,7 @@ export default function App() {
           <input name="site" placeholder="Site (e.g. example.com)" required />
           <input name="username" placeholder="Username" required />
           <div className="row">
-            <input name="password" placeholder="Password" required />
+            <input ref={passwordRef} name="password" placeholder="Password" required />
             <button type="button" onClick={() => generate(20)}>Generate</button>
           </div>
           <textarea name="notes" placeholder="Notes (optional)" />
